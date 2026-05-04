@@ -305,13 +305,7 @@ def _run_centroid_problem():
         st.code("ȳ = (A_semi·ȳ_semi − A_rect·ȳ_rect) / (A_semi − A_rect)", language="text")
 
         st.subheader("Symbolic result")
-        st.latex(
-            _latex_expr(
-                sp.Eq(sp.Symbol(r"\bar{y}"), y_bar_display),
-                mode="plain",
-                mul_symbol="dot",
-            )
-        )
+        st.latex(r"\bar{y} = " + _latex_expr(y_bar_display, mul_symbol="dot"))
 
         # Numerical result (all inputs are numeric — passed validation above)
         if all(_is_numeric_expr(e) for e in [R_expr, w_expr, h_expr]):
@@ -616,7 +610,8 @@ def main():
                 elif not m_t_expr.free_symbols:
                     m_val = float(sp.N(m_t_expr))
                     direction = "Anti-clockwise" if m_val > 0 else ("Clockwise" if m_val < 0 else "Zero")
-                    st.metric("Moment of cable tension about O [N·m]", f"{abs(m_val):.2f} ({direction})")
+                    moment_unit = f"{force_unit}·m"
+                    st.metric(f"Moment of cable tension about O [{moment_unit}]", f"{abs(m_val):.2f} ({direction})")
                 else:
                     st.write("Moment of cable tension about O:")
                     st.latex(_latex_expr(sp.Eq(sp.Symbol("M_O"), m_t_expr), mode="plain", mul_symbol="dot"))
@@ -640,7 +635,7 @@ def main():
                 # For clamp: negate F_A and F_B to show correct sign convention (up=positive)
                 if setup.fbd_kind == "clamp" and k in ["F_A", "F_B"]:
                     v = -v
-                st.write(f"**{k}** = {v:.2f}")
+                st.write(f"**{k}** = {v:.2f} {force_unit}")
 
         if stability_ready and rep and not rep.ok:
             st.subheader("Collapse mode")
@@ -692,11 +687,11 @@ def main():
                     st.markdown("_F_B (Screw B): positive = pushes down (clamps); negative = pulls up_")
                     for name, val_orig, val_clamp in [("F_A (Screw A)", FA_v, FA_clamp), ("F_B (Screw B)", FB_v, FB_clamp)]:
                         if abs(val_clamp) < tol:
-                            st.info(f"▪️ {name} = {val_clamp:.2f} N  → No force")
+                            st.info(f"▪️ {name} = {val_clamp:.2f} {force_unit}  → No force")
                         elif val_clamp > 0:
-                            st.success(f"↓ {name} = {val_clamp:.2f} N (downward) → Screw clamps")
+                            st.success(f"↓ {name} = {val_clamp:.2f} {force_unit} (downward) → Screw clamps")
                         else:
-                            st.info(f"↑ {name} = {val_clamp:.2f} N (upward) → Screw pulls/releases")
+                            st.info(f"↑ {name} = {val_clamp:.2f} {force_unit} (upward) → Screw pulls/releases")
 
                     if not (fy_ok and ma_ok):
                         st.error("🚨 Physics engine detected equilibrium residuals — "
