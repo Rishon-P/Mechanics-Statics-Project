@@ -81,12 +81,12 @@ def setup_clamp() -> ProblemSetup:
     L1, L2, P = sp.symbols("L1 L2 P", real=True)
     F_A, F_B = sp.symbols("F_A F_B", real=True)
 
-    A = Matrix([[1, 1], [0, L2]])
-    b = Matrix([[P], [P * L1]])
+    A = Matrix([[1, 1], [L2, 0]])
+    b = Matrix([[P], [P * (L1 + L2)]])
 
     eq_meta = [
         ("ΣFy = 0", "F_A + F_B"),
-        ("ΣM_A = 0", "F_B·L2"),
+        ("ΣM_B = 0", "F_A·L2"),
     ]
 
     nodes = ["tip", "A", "B"]

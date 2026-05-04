@@ -40,6 +40,7 @@ def draw_flagpole_fbd(
     R_Oy: float,
     stability: Optional["StabilityReport"] = None,
     figsize=(9, 5),
+    length_unit: str = "m",
 ):
     """θ = angle of D→A with +x (deg). T signed flips cable force direction."""
     fig, ax = plt.subplots(figsize=figsize)
@@ -114,8 +115,8 @@ def draw_flagpole_fbd(
     ax.set_xlim(x_min - pad_x, x_max + pad_x)
     ax.set_ylim(min(y_min - pad_y, -0.5), y_max + pad_y)
     ax.set_aspect("equal")
-    ax.set_xlabel("x (m)")
-    ax.set_ylabel("y (m)")
+    ax.set_xlabel(f"x ({length_unit})")
+    ax.set_ylabel(f"y ({length_unit})")
     ax.set_title("Free-body: flagpole + frame")
     ax.grid(True, alpha=0.3)
     ax.axhline(0, color="k", lw=0.5)
@@ -278,7 +279,7 @@ def draw_clamp_fbd(
     draw_arrow(
         x_tip, y_mid + arrow_len, 0, -arrow_len,
         p_col,
-        f"P = {P:.3g}",
+        f"P = {P:.2f}",
         label_side="top",
     )
 
@@ -293,14 +294,14 @@ def draw_clamp_fbd(
         x_A, y_mid - bh - arrow_len * abs(fa_dir),
         0, fa_dir * arrow_len,
         fa_col,
-        f"F_A = {F_A:.3g}",
+        f"F_A = {F_A:.2f}",
         label_side="bottom",
     )
     draw_arrow(
         x_B, y_mid - bh - arrow_len * abs(fb_dir),
         0, fb_dir * arrow_len,
         fb_col,
-        f"F_B = {F_B:.3g}",
+        f"F_B = {F_B:.2f}",
         label_side="bottom",
     )
 

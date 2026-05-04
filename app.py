@@ -158,9 +158,20 @@ def _latex_symbol_name(raw: str) -> str:
 
 
 def _round_numerical_coeffs(expr: sp.Expr) -> sp.Expr:
-    """Round numerical coefficients in symbolic expressions to 2 decimal places."""
-    # Use expr.replace with a lambda function to apply rounding to Float instances
-    return expr.replace(lambda atom: isinstance(atom, sp.Float), lambda atom: sp.N(atom, 2))
+    """Round numerical coefficients in symbolic expressions intelligently."""
+    def round_atom(atom):
+        if isinstance(atom, sp.Float):
+            val = float(atom)
+            # For reasonable-sized numbers, use 6 significant figures then format cleanly
+            # For very large/small numbers, let SymPy choose scientific notation
+            if abs(val) > 1e-4 and abs(val) < 1e10:
+                # Round to 6 sig figs for display, but show as regular decimal if reasonable
+                rounded = float(f"{val:.6g}")
+                return sp.Float(rounded)
+            else:
+                return sp.N(atom, 6)
+        return atom
+    return expr.replace(lambda atom: isinstance(atom, sp.Float), round_atom)
 
 
 def _latex_expr(expr: sp.Expr, **kwargs) -> str:
@@ -454,6 +465,9 @@ def main():
         L_AB_expr = sp.simplify(parsed["L_AB"] * L_factor)
         T_expr = sp.simplify(parsed["T"] * F_factor)
         th_expr = sp.simplify(_convert_angle_to_deg(parsed["theta"], angle_unit))
+        # Normalize angle to [0, 360) for numeric inputs to prevent user confusion with wrapped angles
+        if _is_numeric_expr(th_expr):
+            th_expr = sp.simplify(th_expr % 360)
 
         for label, expr in [("OA", L_OA_expr), ("OB", L_OB_expr), ("AB", L_AB_expr), ("T", T_expr), ("theta", th_expr)]:
             if _is_numeric_expr(expr) and _has_non_finite(expr):
@@ -612,12 +626,13 @@ def main():
         if runtime_failures:
             _render_failure_report(runtime_failures)
 
-        st.subheader("Symbolic solution (before numbers)")
+        st.subheader("Symbolic solution (algebraic formulas with parameters)")
+        st.markdown("_Shows the equilibrium solution formulas. When parameters have numeric values, they are substituted below:_")
         for k, expr in sol.solution_symbolic.items():
             st.latex(_latex_expr(sp.Eq(sp.Symbol(k), sp.simplify(expr)), mode="plain", mul_symbol="dot"))
 
         if sol.solution_numeric:
-            st.subheader("Numerical unknowns")
+            st.subheader("Numerical unknowns (with all parameters substituted)")
             for k, v in sol.solution_numeric.items():
                 st.write(f"**{k}** = {v:.2f}")
 
@@ -629,19 +644,26 @@ def main():
         if setup.fbd_kind == "clamp" and sol.solution_numeric:
             st.subheader("⚙️ Physics Engine — Equilibrium Verification")
             try:
+                import math as _math
                 L1_v = _to_float(subs[setup.subs_keys[0]])
                 L2_v = _to_float(subs[setup.subs_keys[1]])
                 P_v  = _to_float(subs[setup.subs_keys[2]])
+                # For clamp: use original solution values; display will negate them for clamping view
                 FA_v = sol.solution_numeric.get("F_A", float("nan"))
                 FB_v = sol.solution_numeric.get("F_B", float("nan"))
+                # Convert to clamping force view (negate to flip from up=positive to down=positive)
+                FA_clamp = -FA_v if not _math.isnan(FA_v) else float("nan")
+                FB_clamp = -FB_v if not _math.isnan(FB_v) else float("nan")
 
-                import math as _math
                 if any(_math.isnan(x) or _math.isinf(x) for x in [FA_v, FB_v]):
                     st.error("⚠️ Physics engine: solved forces are non-finite. "
                              "Check your inputs for singularities.")
                 else:
-                    res_fy  = FA_v + FB_v - P_v          # should be ≈ 0
-                    res_ma  = FB_v * L2_v - P_v * L1_v   # should be ≈ 0
+                    # For clamp verification: use original (non-negated) solutions
+                    FA_orig = sol.solution_numeric.get("F_A", float("nan"))
+                    FB_orig = sol.solution_numeric.get("F_B", float("nan"))
+                    res_fy  = FA_orig + FB_orig - P_v          # should be ≈ 0
+                    res_ma  = FA_orig * L2_v - P_v * (L1_v + L2_v)   # should be ≈ 0
                     tol     = max(abs(P_v) * 1e-6, 1e-9)
 
                     fy_ok = abs(res_fy) < tol
@@ -655,18 +677,20 @@ def main():
                             st.error(f"❌ ΣFy residual = {res_fy:.4g} (expected ≈ 0)")
                     with col2:
                         if ma_ok:
-                            st.success(f"✔ ΣMₐ = 0 ✔  (residual ≈ {res_ma:.2e})")
+                            st.success(f"✔ ΣM_B = 0 ✔  (residual ≈ {res_ma:.2e})")
                         else:
-                            st.error(f"❌ ΣMₐ residual = {res_ma:.4g} (expected ≈ 0)")
+                            st.error(f"❌ ΣM_B residual = {res_ma:.4g} (expected ≈ 0)")
 
-                    st.markdown("**Screw force interpretation:**")
-                    for name, val in [("F_A (Screw A)", FA_v), ("F_B (Screw B)", FB_v)]:
-                        if abs(val) < tol:
-                            st.info(f"▪️ {name} = {val:.4g}  → No load (zero force)")
-                        elif val > 0:
-                            st.success(f"↑ {name} = {val:.4g}  → Compression (screw pushes jaw up)")
+                    st.markdown("**Screw clamping forces (downward = positive in clamping view):")
+                    st.markdown("_F_A (Screw A): positive = pushes down (clamps); negative = pulls up_")
+                    st.markdown("_F_B (Screw B): positive = pushes down (clamps); negative = pulls up_")
+                    for name, val_orig, val_clamp in [("F_A (Screw A)", FA_v, FA_clamp), ("F_B (Screw B)", FB_v, FB_clamp)]:
+                        if abs(val_clamp) < tol:
+                            st.info(f"▪️ {name} = {val_clamp:.2f} N  → No force")
+                        elif val_clamp > 0:
+                            st.success(f"↓ {name} = {val_clamp:.2f} N (downward) → Screw clamps")
                         else:
-                            st.warning(f"↓ {name} = {val:.4g}  → Tension (screw pulls jaw — verify clamp can sustain this)")
+                            st.info(f"↑ {name} = {val_clamp:.2f} N (upward) → Screw pulls/releases")
 
                     if not (fy_ok and ma_ok):
                         st.error("🚨 Physics engine detected equilibrium residuals — "
@@ -702,6 +726,7 @@ def main():
                     R_Ox=vals.get("R_Ox", 0.0),
                     R_Oy=vals.get("R_Oy", 0.0),
                     stability=rep,
+                    length_unit=length_unit,
                 )
         else:
             draw_exprs = [subs[setup.subs_keys[0]], subs[setup.subs_keys[1]], subs[setup.subs_keys[2]]]
@@ -709,12 +734,15 @@ def main():
             if can_draw:
                 vals = sol.solution_numeric
                 try:
+                    # For clamp: negate to flip from standard coords (up=positive) to clamping view (down=positive)
+                    fa_display = -vals.get("F_A", 0.0) if setup.fbd_kind == "clamp" else vals.get("F_A", 0.0)
+                    fb_display = -vals.get("F_B", 0.0) if setup.fbd_kind == "clamp" else vals.get("F_B", 0.0)
                     fig, _ = draw_clamp_fbd(
                         L1=_to_float(subs[setup.subs_keys[0]]),
                         L2=_to_float(subs[setup.subs_keys[1]]),
                         P=_to_float(subs[setup.subs_keys[2]]),
-                        F_A=vals.get("F_A", 0.0),
-                        F_B=vals.get("F_B", 0.0),
+                        F_A=fa_display,
+                        F_B=fb_display,
                         stability=rep,
                     )
                 except Exception as _draw_err:
