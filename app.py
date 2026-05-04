@@ -629,11 +629,17 @@ def main():
         st.subheader("Symbolic solution (algebraic formulas with parameters)")
         st.markdown("_Shows the equilibrium solution formulas. When parameters have numeric values, they are substituted below:_")
         for k, expr in sol.solution_symbolic.items():
-            st.latex(_latex_expr(sp.Eq(sp.Symbol(k), sp.simplify(expr)), mode="plain", mul_symbol="dot"))
+            # For clamp: negate F_A and F_B to show correct sign convention (up=positive)
+            if setup.fbd_kind == "clamp" and k in ["F_A", "F_B"]:
+                expr = -sp.simplify(expr)
+            st.latex(_latex_expr(sp.Eq(sp.Symbol(k), expr), mode="plain", mul_symbol="dot"))
 
         if sol.solution_numeric:
             st.subheader("Numerical unknowns (with all parameters substituted)")
             for k, v in sol.solution_numeric.items():
+                # For clamp: negate F_A and F_B to show correct sign convention (up=positive)
+                if setup.fbd_kind == "clamp" and k in ["F_A", "F_B"]:
+                    v = -v
                 st.write(f"**{k}** = {v:.2f}")
 
         if stability_ready and rep and not rep.ok:

@@ -274,13 +274,14 @@ def draw_clamp_fbd(
     # ------------------------------------------------------------------ force arrows
     arrow_len = bh * 3.8   # visual length of each arrow
 
-    # Applied load P — downward at the tip
     p_col = "#27ae60"
+    p_dir = 1 if P >= 0 else -1
     draw_arrow(
-        x_tip, y_mid + arrow_len, 0, -arrow_len,
+        x_tip, y_mid - arrow_len * abs(p_dir),
+        0, p_dir * arrow_len,
         p_col,
         f"P = {P:.2f}",
-        label_side="top",
+        label_side="bottom" if p_dir == 1 else "top",
     )
 
     # Screw forces F_A and F_B — upward (positive convention)
