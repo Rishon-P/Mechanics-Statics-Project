@@ -82,7 +82,7 @@ def setup_clamp() -> ProblemSetup:
     F_A, F_B = sp.symbols("F_A F_B", real=True)
 
     A = Matrix([[1, 1], [L2, 0]])
-    b = Matrix([[P], [P * (L1 + L2)]])
+    b = Matrix([[-P], [-P * (L1 + L2)]])
 
     eq_meta = [
         ("ΣFy = 0", "F_A + F_B"),

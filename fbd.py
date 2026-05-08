@@ -274,14 +274,13 @@ def draw_clamp_fbd(
     # ------------------------------------------------------------------ force arrows
     arrow_len = bh * 3.8   # visual length of each arrow
 
+    # Applied load P — upward at the tip
     p_col = "#27ae60"
-    p_dir = 1 if P >= 0 else -1
     draw_arrow(
-        x_tip, y_mid - arrow_len * abs(p_dir),
-        0, p_dir * arrow_len,
+        x_tip, y_mid - arrow_len, 0, arrow_len,
         p_col,
         f"P = {P:.2f}",
-        label_side="bottom" if p_dir == 1 else "top",
+        label_side="bottom",
     )
 
     # Screw forces F_A and F_B — upward (positive convention)
@@ -478,3 +477,153 @@ def draw_centroid_diagram(
     ax.grid(True, alpha=0.25)
     fig.tight_layout()
     return fig, ax
+
+
+def draw_parallel_axis_diagram(
+    *,
+    v_pp: float = 50.0,   # signed perp offset of p'-axis from C  (= d input, signed)
+    v_p: float  = 75.0,   # signed perp offset of p-axis  from C  (= d + s,   signed)
+    A_val: Optional[float] = None,
+    delta_I: float = 15e6,
+    figsize=(9, 8),
+):
+    """
+    Textbook-accurate diagram for Problem A/9.
+
+    v_pp : signed perpendicular distance from C to p'-axis (= d input).
+           Positive → p' is "above" C in the diagram.
+           Negative → p' is "below" C (opposite side).
+    v_p  : signed perpendicular distance from C to p-axis (= d + s).
+           Sign determines which side of C p falls on.
+
+    The dimension arrows always show the absolute magnitudes with the correct
+    geometric direction, so the diagram matches the user's sign choice.
+    """
+    import math as _m
+
+    fig, ax = plt.subplots(figsize=figsize)
+    fig.patch.set_facecolor("white")
+    ax.set_facecolor("white")
+
+    # ── Local coordinate system ─────────────────────────────────────────
+    # u  = along-axis direction
+    # v  = perpendicular direction (positive = "upper-left" in plot coords)
+    # C is fixed at the origin (u=0, v=0).
+    theta = _m.radians(28)
+    cos_t, sin_t = _m.cos(theta), _m.sin(theta)
+    eu = np.array([cos_t,  sin_t])          # along-axis unit vector
+    ev = np.array([-sin_t, cos_t])          # perp unit vector
+
+    C = np.array([0.0, 0.0])
+
+    def to_plot(u, v):
+        pt = C + u * eu + v * ev
+        return pt[0], pt[1]
+
+    # ── Blob shape ──────────────────────────────────────────────────────
+    # Symmetric in v (radius ~80) so C is always centred inside the blob
+    # regardless of which direction the axes are.
+    phi = np.linspace(0, 2 * np.pi, 360)
+    r_u, r_v = 100.0, 78.0      # semi-axes in u and v
+
+    def blob_radius(ph):
+        sin_ph, cos_ph = _m.sin(ph), _m.cos(ph)
+        r = 1.0 / _m.sqrt((cos_ph / r_u) ** 2 + (sin_ph / r_v) ** 2 + 1e-12)
+        r *= (1.0
+              + 0.10 * _m.cos(2 * ph + 0.6)
+              + 0.07 * _m.cos(3 * ph + 1.3)
+              + 0.04 * _m.sin(4 * ph + 0.4))
+        return r
+
+    u_b = np.array([blob_radius(p) * _m.cos(p) for p in phi])
+    v_b = np.array([blob_radius(p) * _m.sin(p) for p in phi])
+    bx  = [to_plot(u, v)[0] for u, v in zip(u_b, v_b)]
+    by  = [to_plot(u, v)[1] for u, v in zip(u_b, v_b)]
+
+    ax.fill(bx, by, color="#a0a8a0", alpha=0.55, zorder=1)
+    ax.plot(bx + [bx[0]], by + [by[0]], color="#2c3e50", lw=1.8, zorder=2)
+
+    # ── Centroid C and area label ───────────────────────────────────────
+    ax.scatter([C[0]], [C[1]], color="black", s=80, zorder=8)
+    ax.text(C[0] + 6, C[1] + 4, "C", fontsize=12, fontstyle="italic",
+            fontweight="bold", color="black", zorder=9)
+    ax.text(*to_plot(-38, -28), "A", fontsize=14, fontstyle="italic",
+            color="#2c3e50", zorder=9, ha="center", va="center")
+
+    # ── Axis lines at their signed v-offsets ────────────────────────────
+    u_ext = 160.0
+
+    def draw_axis(v_off, label):
+        x0, y0 = to_plot(-u_ext, v_off)
+        x1, y1 = to_plot(+u_ext, v_off)
+        ax.plot([x0, x1], [y0, y1], color="black", lw=1.6, zorder=4)
+        lx, ly = to_plot(-u_ext - 12, v_off)
+        ax.text(lx, ly, label, fontsize=12, fontstyle="italic", color="black",
+                zorder=10, ha="right", va="center")
+
+    draw_axis(v_p,  "p")    # p  axis at signed offset v_p
+    draw_axis(v_pp, "p′")   # p' axis at signed offset v_pp
+
+    # ── Perpendicular dimension arrows ──────────────────────────────────
+    u_ann    = u_ext * 0.72
+    ann_col  = "black"
+    tick_u   = 8.0
+
+    def perp_arrow(v_from, v_to, label, u_pos, lbl_offset_u=12):
+        if abs(v_to - v_from) < 1e-9:
+            return
+        x0, y0 = to_plot(u_pos, v_from)
+        x1, y1 = to_plot(u_pos, v_to)
+        ax.annotate("", xy=(x1, y1), xytext=(x0, y0),
+                    arrowprops=dict(arrowstyle="<->", color=ann_col, lw=1.4),
+                    zorder=7)
+        for vv in [v_from, v_to]:
+            tx0, ty0 = to_plot(u_pos - tick_u, vv)
+            tx1, ty1 = to_plot(u_pos + tick_u, vv)
+            ax.plot([tx0, tx1], [ty0, ty1], color=ann_col, lw=1.2, zorder=7)
+        mx, my = to_plot(u_pos + lbl_offset_u, (v_from + v_to) / 2)
+        ax.text(mx, my, label, fontsize=10, color=ann_col,
+                ha="left", va="center", zorder=9,
+                bbox=dict(boxstyle="square,pad=0.15", fc="white", ec="none", alpha=0.85))
+
+    # Arrow 1: p' → p  (shows |s| = separation between the two axes)
+    perp_arrow(v_pp, v_p, f"{abs(v_p - v_pp):.4g} mm", u_ann, lbl_offset_u=12)
+
+    # Arrow 2: C → p'  (shows |d| = distance from centroid to p'-axis)
+    perp_arrow(0, v_pp, f"{abs(v_pp):.4g} mm", u_ann + 34, lbl_offset_u=12)
+
+    # ── Result box ──────────────────────────────────────────────────────
+    if A_val is not None:
+        # Place the box below all drawn geometry
+        min_v_all = min(0, v_pp, v_p, -r_v - 20)
+        bx_txt, by_txt = to_plot(-95, min_v_all - 18)
+        info = (
+            f"ΔI = {delta_I/1e6:.4g}×10⁶ mm⁴\n"
+            f"A = ΔI / (d_p² − d_p′²)\n"
+            f"⟹  A = {A_val:,.0f} mm²"
+        )
+        ax.text(bx_txt, by_txt, info,
+                ha="left", va="top", fontsize=9, color="#1a252f",
+                fontfamily="monospace",
+                bbox=dict(boxstyle="round,pad=0.45", fc="#f0f8ff",
+                          ec="#2980b9", lw=1.2, alpha=0.95),
+                zorder=11)
+
+    # ── Auto-fit limits around all drawn geometry ───────────────────────
+    all_x = bx + [to_plot(u, v)[0] for u in [-u_ext, u_ext]
+                  for v in [0, v_pp, v_p]]
+    all_y = by + [to_plot(u, v)[1] for u in [-u_ext, u_ext]
+                  for v in [0, v_pp, v_p]]
+    x_lo, x_hi = min(all_x), max(all_x)
+    y_lo, y_hi = min(all_y), max(all_y)
+    mx_pad = (x_hi - x_lo) * 0.18
+    my_pad = (y_hi - y_lo) * 0.22
+    ax.set_xlim(x_lo - mx_pad,       x_hi + mx_pad * 2.5)
+    ax.set_ylim(y_lo - my_pad * 1.8, y_hi + my_pad)
+    ax.set_aspect("equal")
+    ax.axis("off")
+    ax.set_title("Problem A/9 — Parallel Axis Theorem",
+                 fontsize=11, fontweight="bold", color="#2c3e50", pad=8)
+    fig.tight_layout()
+    return fig, ax
+

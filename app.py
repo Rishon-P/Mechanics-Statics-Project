@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 import streamlit as st
 import sympy as sp
 
-from fbd import draw_clamp_fbd, draw_centroid_diagram, draw_flagpole_fbd
+from fbd import draw_clamp_fbd, draw_centroid_diagram, draw_flagpole_fbd, draw_parallel_axis_diagram
 from models import setup_clamp, setup_flagpole
 from solver_backend import build_and_solve
 from stability import check_stability
@@ -376,6 +376,204 @@ def _run_centroid_problem():
         )
 
 
+def _run_parallel_axis_problem():
+    """
+    Problem A/9 — Parallel Axis Theorem (textbook geometry):
+      From the diagram:
+        s   = 25 mm  — perpendicular separation between p and p' axes
+        d   = 50 mm  — perpendicular distance from p' (nearer axis) to centroid C
+      Derived distances from C:
+        d_pp  = d       = 50 mm   (C to p'-axis, nearer)
+        d_p   = d + s   = 75 mm   (C to p-axis,  farther)
+      Parallel Axis Theorem:
+        I_p   = I_C + A·d_p²
+        I_p'  = I_C + A·d_pp²
+        I_p − I_p' = A(d_p² − d_pp²) = 15×10⁶ mm⁴  →  solve for A.
+    Follows the same input / error-handling pattern as the other problems.
+    """
+    st.sidebar.subheader("Dimensions (mm) — Problem A/9")
+    s_raw   = st.sidebar.text_input(
+        "s — separation between p and p\u2019 axes [mm]",
+        value="25",
+        help="Perpendicular distance between the two parallel axes (25 mm in the textbook diagram)",
+    )
+    d_raw   = st.sidebar.text_input(
+        "d — distance from p\u2019 to centroid C [mm]",
+        value="50",
+        help="Perpendicular distance from the nearer axis p\u2019 to centroid C (50 mm in the textbook diagram)",
+    )
+    delta_I_raw = st.sidebar.text_input(
+        "\u0394I = I_p \u2212 I_p\u2019  [mm\u2074  \u00d7 10\u2076]",
+        value="15",
+        help="Difference in moments of inertia in units of 10\u2076 mm\u2074",
+    )
+
+    # --- Parse inputs (identical helper used by the other problems) ---
+    parse_errors: list[str] = []
+    parsed: dict[str, sp.Expr] = {}
+    for name, raw in [("s", s_raw), ("d", d_raw), ("delta_I_millions", delta_I_raw)]:
+        expr, err = _parse_expr(name, raw)
+        if err:
+            parse_errors.append(err)
+        else:
+            parsed[name] = expr
+
+    if parse_errors:
+        _render_failure_report(parse_errors)
+        st.stop()
+
+    s_expr       = sp.simplify(parsed["s"])
+    d_expr       = sp.simplify(parsed["d"])
+    # User enters ΔI in units of 10⁶ mm⁴; convert to mm⁴
+    delta_I_expr = sp.simplify(parsed["delta_I_millions"] * sp.Integer(10)**6)
+
+    # --- Validation (same pattern as other problems) ---
+    validation_failures: list[str] = []
+
+    for label, expr in [("s", s_expr), ("d", d_expr), ("delta_I", delta_I_expr)]:
+        if _is_numeric_expr(expr) and _has_non_finite(expr):
+            validation_failures.append(
+                f"Invalid input: {label} results in division by zero or non-finite value."
+            )
+        if _is_numeric_expr(expr) and not _is_real_finite_numeric(expr):
+            validation_failures.append(
+                f"Invalid numeric input: {label} must be real and finite."
+            )
+
+    # s = 0 means axes coincide — the difference ΔI is always 0, unsolvable.
+    if _is_numeric_expr(s_expr) and abs(_to_float(s_expr)) < 1e-12:
+        validation_failures.append(
+            "Invalid geometry: s cannot be zero — p and p\u2019 would be the same axis "
+            "and ΔI = 0 for any area."
+        )
+
+    # Check equidistant degenerate case: |d| == |d + s| ⇒ denominator = 0.
+    # This happens when s = -2d (C is the midpoint between p and p').
+    if (
+        all(_is_numeric_expr(e) for e in [s_expr, d_expr])
+        and not validation_failures
+    ):
+        _d1_chk = abs(_to_float(d_expr))
+        _d2_chk = abs(_to_float(d_expr) + _to_float(s_expr))
+        if abs(_d1_chk - _d2_chk) < 1e-9:
+            validation_failures.append(
+                "Degenerate case: the two axes are equidistant from C — "
+                "ΔI = A(d_p\u00b2 − d_p\u2019\u00b2) = 0 regardless of A. "
+                "Choose different values of s and d."
+            )
+
+    if validation_failures:
+        _render_failure_report(validation_failures)
+        st.stop()
+
+    # --- Derived distances from centroid C to each axis ---
+    # Negative s or d means distance taken in opposite direction; physics only
+    # depends on the magnitude of the perpendicular distance (d appears as d²).
+    # So we use absolute values. We sort so d_p ≥ d_pp (farther ≥ nearer).
+    d_pp_expr = sp.Abs(d_expr)                          # |d|   — C to p'
+    d_p_expr  = sp.Abs(sp.simplify(d_expr + s_expr))    # |d+s| — C to p
+
+    # --- Symbolic solution using the Parallel Axis Theorem ---
+    # I_p  = I_C + A·d_p²
+    # I_p' = I_C + A·d_pp²
+    # |I_p − I_p'| = A·|d_p² − d_pp²|  =>  A = ΔI / |d_p² − d_pp²|
+    denom_expr = sp.Abs(d_p_expr**2 - d_pp_expr**2)
+    try:
+        A_expr = sp.simplify(delta_I_expr / denom_expr)
+    except Exception:
+        A_expr = delta_I_expr / denom_expr
+
+    # --- Display layout ---
+    colL, colR = st.columns((1, 1))
+
+    with colL:
+        st.subheader("Step 1 — Parallel Axis Theorem equations")
+
+        st.code("d_p  = d + s          (C to p,  farther axis)", language="text")
+        st.code("d_p\u2019 = d              (C to p\u2019, nearer axis)", language="text")
+        st.code("I_p  = I_C + A\u00b7d_p\u00b2", language="text")
+        st.code("I_p\u2019 = I_C + A\u00b7d_p\u2019\u00b2", language="text")
+        st.code("I_p \u2212 I_p\u2019 = A\u00b7(d_p\u00b2 \u2212 d_p\u2019\u00b2)", language="text")
+        st.code("\u27f9  A = \u0394I / (d_p\u00b2 \u2212 d_p\u2019\u00b2)", language="text")
+
+        st.subheader("Symbolic result")
+        st.latex(
+            _latex_expr(
+                sp.Eq(sp.Symbol("A"), A_expr),
+                mode="plain",
+                mul_symbol="dot",
+            )
+        )
+
+        # Numerical result
+        all_numeric = all(
+            _is_numeric_expr(e) for e in [s_expr, d_expr, delta_I_expr]
+        )
+        if all_numeric:
+            s_v       = _to_float(s_expr)
+            d_v       = _to_float(d_expr)
+            dI_v      = _to_float(delta_I_expr)    # mm⁴
+            # Negative s or d = opposite direction; distances are magnitudes
+            _r1       = abs(d_v)                   # |d|   — C to p'
+            _r2       = abs(d_v + s_v)             # |d+s| — C to p
+            d_pp_v    = min(_r1, _r2)              # nearer axis
+            d_p_v     = max(_r1, _r2)              # farther axis
+            denom_v   = d_p_v**2 - d_pp_v**2
+            A_val     = dI_v / denom_v
+
+            st.subheader("Numerical result")
+            st.write(f"**s** = {s_v:.4g} mm  (separation between p and p\u2019)")
+            st.write(f"**d** = {d_v:.4g} mm  (p\u2019 to C, signed)")
+            st.write(f"**|d|**   = {abs(d_v):.4g} mm  (C to p\u2019)")
+            st.write(f"**|d+s|** = {abs(d_v + s_v):.4g} mm  (C to p)")
+            st.write(f"**d_p\u00b2 \u2212 d_p\u2019\u00b2** = {denom_v:.4g} mm\u00b2")
+            st.write(f"**\u0394I** = {dI_v:.6g} mm\u2074  ({dI_v/1e6:.4g} \u00d7 10\u2076 mm\u2074)")
+            st.metric("Area A [mm\u00b2]", f"{A_val:,.2f} mm\u00b2")
+        else:
+            st.info(
+                "Numerical result requires numeric inputs. "
+                "You are in symbolic-variable mode."
+            )
+
+    with colR:
+        st.subheader("Parallel axis diagram")
+        all_numeric_draw = all(
+            _is_numeric_expr(e) and _is_real_finite_numeric(e)
+            for e in [s_expr, d_expr, delta_I_expr]
+        )
+        if all_numeric_draw:
+            s_v   = _to_float(s_expr)
+            d_v   = _to_float(d_expr)
+            dI_v  = _to_float(delta_I_expr)
+            # Negative s or d = opposite direction; use magnitudes, sort farther/nearer
+            _r1   = abs(d_v)
+            _r2   = abs(d_v + s_v)
+            d_pp_v = min(_r1, _r2)   # nearer axis
+            d_p_v  = max(_r1, _r2)   # farther axis
+            A_val  = dI_v / (d_p_v**2 - d_pp_v**2)
+            try:
+                fig, _ = draw_parallel_axis_diagram(
+                    v_pp=d_v,           # signed: d  (p' offset from C)
+                    v_p=d_v + s_v,      # signed: d+s (p  offset from C)
+                    A_val=A_val,
+                    delta_I=dI_v,
+                )
+                buf = io.BytesIO()
+                fig.savefig(buf, format="png", dpi=120, bbox_inches="tight")
+                buf.seek(0)
+                st.image(buf, use_container_width=True)
+                plt.close(fig)
+            except Exception as diagram_err:
+                st.error(f"Could not render diagram: {diagram_err}")
+        else:
+            st.info("Diagram requires numeric geometry inputs.")
+
+    with st.expander("Raw symbolic formula for A"):
+        st.latex(
+            r"A = \frac{\Delta I}{(d+s)^2 - d^2}"
+        )
+
+
 def main():
 
     st.set_page_config(page_title="Statics Presentation", layout="wide")
@@ -388,11 +586,15 @@ def main():
             "Flagpole & frame (2/49 style)",
             "Wood clamp (3/8 style)",
             "Centroid of shaded area (5/53 style)",
+            "Parallel Axis Theorem (A/9 style)",
         ],
     )
-    # ---- Route centroid problem before the equilibrium setup ----
+    # ---- Route self-contained problems before the equilibrium setup ----
     if scenario.startswith("Centroid"):
         _run_centroid_problem()
+        return
+    if scenario.startswith("Parallel"):
+        _run_parallel_axis_problem()
         return
 
     setup = _setup_for_choice(scenario)
